@@ -132,35 +132,28 @@ def convert_pipelines_to_serverless(
         logger.info(f"Converting pipeline: {pipeline_name} ({pipeline_id})")
 
         try:
-            # Create a parameters dictionary using getattr with default values
+            # Explicit attributes to set to convert to serverless
             update_params = {
                 'pipeline_id': pipeline_id,
                 'budget_policy_id': budget_policies.get(pipeline_id, None),
-                'catalog': getattr(p.spec, 'catalog', None),
-                'schema': getattr(p.spec, 'schema', None),
-                'channel': getattr(p.spec, 'channel', None),
-                'clusters': None,  # Explicitly set to None for serverless compute
-                'configuration': getattr(p.spec, 'configuration', None),
-                'continuous': getattr(p.spec, 'continuous', None),
-                'development': getattr(p.spec, 'development', None),
-                'edition': getattr(p.spec, 'edition', None),
-                'filters': getattr(p.spec, 'filters', None),
-                'id': getattr(p.spec, 'id', None),
-                'libraries': getattr(p.spec, 'libraries', None),
-                'name': getattr(p.spec, 'name', None),
-                'notifications': getattr(p.spec, 'notifications', None),
+                'clusters': None,
                 'photon': True,
-                'serverless': True,
-                'storage': getattr(p.spec, 'storage', None),
-                'target': getattr(p.spec, 'target', None),
-                'trigger': getattr(p.spec, 'trigger', None)
+                'serverless': True
             }
+
+            # Add other parameters from the original pipeline spec
+            for k in p.spec.as_dict().keys():
+                if k in update_params.keys():
+                    continue
+                update_params[k] = getattr(p.spec, k, None)
+
 
             if dry_run:
                 logger.info(f"DRY RUN: Would update pipeline {pipeline_name} ({pipeline_id}) to serverless")
                 results["successful"].append(pipeline_id)
             else:
-                # Update the pipeline with unpacked parameters
+                # Update the pipeline with unpacked parameters. 
+                # Currently there is no PATCH API available, so you need to provide the entire configuration.
                 workspace_client.pipelines.update(**update_params)
                 logger.info(f"Successfully updated pipeline {pipeline_name} ({pipeline_id}) to serverless")
                 results["successful"].append(pipeline_id)
@@ -226,39 +219,22 @@ def rollback_pipelines(
         logger.info(f"Rolling back pipeline: {pipeline_name} ({pipeline_id})")
 
         try:
-            # Extract parameters from the backed up configuration
+
             spec = original_config.spec
+            update_params = {'pipeline_id': pipeline_id}
 
-            update_params = {
-                'pipeline_id': pipeline_id,
-                'clusters': getattr(spec, 'clusters', None),
-                'catalog': getattr(spec, 'catalog', None),
-                'schema': getattr(spec, 'schema', None),
-                'channel': getattr(spec, 'channel', None),
-                'configuration': getattr(spec, 'configuration', None),
-                'continuous': getattr(spec, 'continuous', None),
-                'development': getattr(spec, 'development', None),
-                'edition': getattr(spec, 'edition', None),
-                'filters': getattr(spec, 'filters', None),
-                'libraries': getattr(spec, 'libraries', None),
-                'name': getattr(spec, 'name', None),
-                'notifications': getattr(spec, 'notifications', None),
-                'photon': getattr(spec, 'photon', None),
-                'serverless': getattr(spec, 'serverless', None),
-                'storage': getattr(spec, 'storage', None),
-                'target': getattr(spec, 'target', None),
-                'trigger': getattr(spec, 'trigger', None),
-            }
-
-            # Drop None values
-            update_params = {k: v for k, v in update_params.items() if v is not None}
+            # Add other parameters from the original pipeline spec
+            for k in spec.as_dict().keys():
+                update_params[k] = getattr(spec, k, None)
 
             if dry_run:
                 logger.info(f"DRY RUN: Would update pipeline {pipeline_name} ({pipeline_id}) with original configuration")
                 results["successful"].append(pipeline_id)
             else:
                 # Execute the update
+                # Currently there is no PATCH API available, so you need to provide the entire configuration.
                 workspace_client.pipelines.update(**update_params)
+                
                 logger.info(f"Successfully rolled back pipeline {pipeline_name} ({pipeline_id})")
                 results["successful"].append(pipeline_id)
 
