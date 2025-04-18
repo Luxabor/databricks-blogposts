@@ -8,8 +8,7 @@ import os
 import sys
 import logging
 import argparse
-from typing import List, Dict, Any, Optional
-from databricks.sdk import AccountClient, WorkspaceClient
+from typing import List
 from dlt_serverless_converter.utils.budget_policies import generate_budget_policies_from_workspace_pipelines
 from dlt_serverless_converter.utils.pipelines import WorkspacePipeline, convert_pipelines_to_serverless, get_workspace_pipelines, load_pipelines_from_file, rollback_pipelines, save_pipelines_to_file
 from dlt_serverless_converter.utils.auth import *
@@ -48,7 +47,10 @@ def parse_arguments():
                                          help='Convert pipelines to serverless compute')
     convert_parser.add_argument('--backup-file', default=None,
                               help='Path to save pipeline backup file (default: auto-generated)')
-    #convert_parser.add_argument('--interactive', '-i', action='store_true', help='Interactively select pipelines to convert')
+    convert_parser.add_argument('--budget-policy-id', default=None,
+                              help='Specify an existing budget policy ID to use for all pipelines')
+    convert_parser.add_argument('--skip-budget-policy', action='store_true',
+                              help='Skip creating or assigning budget policies')
     add_common_args(convert_parser)
     
     # Rollback command
@@ -56,7 +58,6 @@ def parse_arguments():
                                           help='Rollback pipelines to a previous state')
     rollback_parser.add_argument('--backup-file', required=True,
                                help='Path to the pipeline backup file to restore from')
-    #rollback_parser.add_argument('--interactive', '-i', action='store_true', help='Interactively select pipelines to roll back')
     add_common_args(rollback_parser)
     
     # List command (optional utility to just list pipelines)
@@ -154,8 +155,29 @@ def _get_selected_pipelines(workspace_pipelines: List[WorkspacePipeline]) -> Lis
     return selected_pipelines
 
 
-def command_convert(args, workspace_client, account_client):
-    """Execute the convert command."""
+def command_convert(args, workspace_client: WorkspaceClient, account_client: AccountClient = None):
+    """
+    Convert selected Databricks pipelines to serverless mode.
+    This command retrieves pipelines from the workspace, allows the user to select
+    which ones to convert, backs them up, and then converts them to serverless mode
+    with appropriate budget policies.
+    Args:
+        args: Command-line arguments containing configuration options:
+            - backup_file: Path to save pipeline backups
+            - budget_policy_id: Optional ID of budget policy to apply to all pipelines
+            - dry_run: If True, shows what would happen without making changes
+            - skip_budget_policy: If True, skips budget policy creation/assignment
+        workspace_client (WorkspaceClient): Client for interacting with Databricks workspace
+        account_client (AccountClient, optional): Client for account-level operations,
+            required for budget policy generation
+    Returns:
+        None: The function performs operations but doesn't return a value
+    Notes:
+        - Creates a backup file of pipelines before converting them
+        - Provides interactive prompts for pipeline selection and budget policy configuration
+        - Can run in dry-run mode to preview changes without applying them
+    """
+    
     # Get pipelines from workspace
     logger.info("Retrieving pipelines from workspace...")
     workspace_pipelines = get_workspace_pipelines(workspace_client)
@@ -172,20 +194,62 @@ def command_convert(args, workspace_client, account_client):
     saved_file = save_pipelines_to_file(workspace_pipelines, backup_file)
     logger.info(f"Pipeline backup saved to {saved_file}")
     
-    # Generate budget policies if not in dry run mode
+    # Budget policy handling
     budget_policies = {}
-    if not args.dry_run:
-        logger.info("Generating budget policies...")
-        budget_policies = generate_budget_policies_from_workspace_pipelines(account_client, workspace_client, workspace_pipelines)
-        logger.info(f"Generated {len([p for p in budget_policies.values() if p is not None])} budget policies")
+    
+    # Ask user if they want to use a custom budget policy ID
+    use_custom_budget = False
+    if not args.budget_policy_id:
+        logger.info("\nDo you want to provide a custom budget policy ID? (y/n):")
+        choice = input("> ").strip().lower()
+        use_custom_budget = choice == 'y' or choice == 'yes'
+    
+    # Handle budget policy assignment
+    if args.budget_policy_id or use_custom_budget:
+        policy_id = args.budget_policy_id
+        
+        if use_custom_budget and not policy_id:
+            logger.info("Enter the budget policy ID to use to convert the selected pipelines:")
+            policy_id = input("> ").strip()
+            
+        logger.info(f"Using budget policy ID: {policy_id}")
+
+        # Apply the same budget policy to all selected pipelines
+        for pipeline in workspace_pipelines:
+            budget_policies[pipeline.pipeline_id] = policy_id
+    
+    # Generate budget policies if not in dry run mode and no specific budget policy provided
+    elif not args.dry_run and not args.skip_budget_policy:
+        if account_client:
+            logger.info("Generating budget policies...")
+            budget_policies = generate_budget_policies_from_workspace_pipelines(account_client, workspace_client, workspace_pipelines)
+            logger.info(f"Generated {len([p for p in budget_policies.values() if p is not None])} budget policies")
+        else:
+            logger.error("Account Client configuration not provided. Cannot generate budget policies and convert pipelines.")
+            sys.exit(1)
+    elif args.skip_budget_policy:
+        logger.info("Skipping budget policy creation or assignment as per user request.")
     else:
         logger.info("DRY RUN: Would generate budget policies for selected pipelines")
     
     # Execute pipeline conversion
     convert_pipelines_to_serverless(workspace_client, workspace_pipelines, budget_policies, args.dry_run)
 
-def command_rollback(args, workspace_client, _):
-    """Execute the rollback command."""
+def command_rollback(args, workspace_client: WorkspaceClient, _):
+    """
+    Roll back pipelines to their previously backed-up configurations.
+    This command loads pipeline configurations from a specified backup file,
+    prompts the user to select which pipelines to roll back, and then
+    executes the rollback process for the selected pipelines.
+    Args:
+        args: Command line arguments containing:
+            - backup_file: Path to the backup file containing pipeline configurations
+            - dry_run: Boolean flag indicating whether to perform a dry run without making changes
+        workspace_client (WorkspaceClient): Client for interacting with the workspace
+    Returns:
+        None
+    """
+
     backup_file = args.backup_file
     logger.info(f"Starting rollback from backup file: {backup_file}")
     
@@ -204,10 +268,24 @@ def command_rollback(args, workspace_client, _):
     # Execute rollback
     rollback_pipelines(workspace_client, backed_up_pipelines, args.dry_run)
 
-def command_list(args, workspace_client, _):
-    """Execute the list command to display pipelines without making changes."""
+def command_list(args, workspace_client: WorkspaceClient, _):
+    """List all pipelines in the current workspace.
+    This function retrieves all pipelines from the workspace, displays their 
+    information (ID, name, tags if available, and serverless status) in the console,
+    and optionally saves the pipeline list to a file.
+    Args:
+        args: Command-line arguments containing:
+            - output_file: Optional path to save the pipeline list to a file
+        workspace_client (WorkspaceClient): Client to interact with the workspace
+    Returns:
+        list: List of workspace pipeline objects
+    Example:
+        >>> pipelines = command_list(args, workspace_client)
+        >>> print(f"Retrieved {len(pipelines)} pipelines")
+    """
     logger.info("Listing pipelines in workspace...")
     workspace_pipelines = get_workspace_pipelines(workspace_client)
+    workspace_pipelines.sort(key=lambda pipeline: pipeline.pipeline_definition.spec.name)
     
         # Display pipeline information
     logger.info(f"Found {len(workspace_pipelines)} pipelines:")
@@ -224,4 +302,3 @@ def command_list(args, workspace_client, _):
         logger.info(f"Pipeline list saved to {args.output_file}")
     
     return workspace_pipelines
-

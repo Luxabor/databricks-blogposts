@@ -10,6 +10,14 @@ A command-line utility for converting Databricks Delta Live Tables (DLT) pipelin
 - **Rollback capability**: restore pipelines to previous configurations if needed
 - **Pipeline discover**: list pipelines in the Databricks workspace
 
+## How It Works
+
+1. **Pipeline Discovery**: The tool connects to your Databricks workspace and retrieves all pipeline configurations
+2. **Backup**: Before making any changes, pipeline definitions are saved to a backup file
+3. **Budget Policy**: For each pipeline you can define if you want to associate it to an existing budget policy, create one for each pipeline or leave the pipeline without.
+4. **Pipeline Update**: Pipelines are upgraded to use serverless compute
+5. **Verification**: Results are logged showing successful and failed conversions
+
 ## Prerequisites
 
 - Python 3.8 or higher
@@ -25,7 +33,7 @@ A command-line utility for converting Databricks Delta Live Tables (DLT) pipelin
 git clone ###
 cd dlt_serverless_converter
 
-# Install the package in development mode
+# Install the package
 pip install .
 ```
 
@@ -54,19 +62,38 @@ dlt-serverless-converter list
 ### Convert Pipelines to Serverless
 
 ```bash
-dlt-serverless-converter convert
+dlt-serverless-converter convert [--backup-file FILE_PATH] [--budget-policy-id POLICY_ID] [--skip-budget-policy]
 ```
+Parameters:
+- --backup-file FILE_PATH - Specify a custom path to save the pipeline backup file (default: auto-generated)
+- --budget-policy-id POLICY_ID - Use an existing budget policy ID for all selected pipelines
+- --skip-budget-policy - Skip creating or assigning budget policies to the pipelines
 
-### Rollback Changes
+When converting Databricks DLT pipelines to serverless compute, the tool offers several alternatives for associating budget policies:
+
+#### Option 1: Automatically Generate Budget Policies
+The utility asks if you want to create individual budget policies for each pipeline based on their existing tags and configurations:
+- Creates one budget policy per pipeline
+- Customizes each policy based on pipeline's tags
+- Requires Budget Admin permissions
+
+
+#### Option 2: Single Shared Budget Policy
+Associate all selected pipelines with a single existing budget policy:
 
 ```bash
-dlt-serverless-converter rollback --backup-file <file_location>
+dlt-serverless-converter convert --budget-policy-id POLICY_ID
+```
+Alternatively, the tool will interactively prompt you to enter a budget policy ID during execution if you don't specify one via command line.
+
+#### Option 3: Skip Budget Policies Entirely
+Convert pipelines to serverless compute without any budget policy association.
+
+```bash
+dlt-serverless-converter convert --skip-budget-policy
 ```
 
-## How It Works
-
-1. **Pipeline Discovery**: The tool connects to your Databricks workspace and retrieves all pipeline configurations
-2. **Backup**: Before making any changes, pipeline definitions are saved to a backup file
-3. **Budget Policy Creation**: For each pipeline, a matching budget policy is created
-4. **Pipeline Update**: Pipelines are updated to use serverless compute and linked to their budget policies
-5. **Verification**: Results are logged showing successful and failed conversions
+### Rollback Changes from a backup file
+```bash
+dlt-serverless-converter rollback --backup-file FILE_PATH
+```

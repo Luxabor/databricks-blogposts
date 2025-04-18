@@ -129,6 +129,7 @@ def convert_pipelines_to_serverless(
         p = pipeline.pipeline_definition
         pipeline_id = pipeline.pipeline_id
         pipeline_name = pipeline.pipeline_name
+
         logger.info(f"Converting pipeline: {pipeline_name} ({pipeline_id})")
 
         try:

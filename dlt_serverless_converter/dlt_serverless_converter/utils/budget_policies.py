@@ -1,5 +1,5 @@
-import re  # Missing import for generate_policy_name
-from typing import List  # Add more type hints
+import re 
+from typing import List
 
 from databricks.sdk import AccountClient, WorkspaceClient
 from databricks.sdk.errors.platform import AlreadyExists
@@ -74,6 +74,13 @@ def generate_rule_set_grants(workspace_client:WorkspaceClient, pipelines:List[Wo
 
     return rule_set_grants
 
+def check_budget_policy_exists(account_client: AccountClient, budget_policy_id: str) -> bool:
+    try:
+        account_client.budget_policy.get(budget_policy_id)
+        return True
+    except Exception as e:
+        logger.error("Error checking budget policy existence: %s", str(e))
+        return False
 
 def is_user(user_list, userName):
     return any([user.userName == userName for user in user_list])
